@@ -416,6 +416,49 @@ try:
                     )
             aup_model.train(aup_train_steps)    
 
+        elif args.algo == 'drqn-aup':
+            from training.models import SafeLifeRQNetwork
+            from training.drqn_aup import DRQN_AUP
+            from training.dqn_aux import DQN_AUX
+
+            obs_shape = training_envs[0].observation_space.shape
+            train_model_aux = SafeLifeRQNetwork(obs_shape)
+            train_model_aup = SafeLifeRQNetwork(obs_shape)
+            target_model_aux = SafeLifeRQNetwork(obs_shape)
+            target_model_aup = SafeLifeRQNetwork(obs_shape)
+                
+            aup_train_steps = 5e6
+
+            if args.algo == 'aup-p':
+                aup_p = True
+            else:
+                aup_p = False
+
+            aux_model = DQN_AUX(
+                    train_model_aux, target_model_aux, run_env_type,
+                    training_envs=training_envs,
+                    testing_envs=None,
+                    z_dim=int(args.z),
+                    logdir=data_dir,
+                    summary_writer=summary_writer)
+            aux_model.train(aux_train_steps)   
+
+            aup_model = DRQN_AUP(
+                    training_model_aux=train_model_aux,
+                    target_model_aux=target_model_aux,
+                    training_model_aup=train_model_aup,
+                    target_model_aup=target_model_aup,
+                    env_type=run_env_type,
+                    rand_proj=False,
+                    z_dim=int(args.z),
+                    training_envs=training_envs,
+                    testing_envs=None,
+                    logdir=data_dir, 
+                    summary_writer=summary_writer,
+                    )
+            aup_model.train(aup_train_steps)    
+
+
                                       
 except Exception:
     logging.exception("Ran into an unexpected error. Aborting training.")

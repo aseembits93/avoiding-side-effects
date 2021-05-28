@@ -144,6 +144,35 @@ class SafeLifeQNetwork(nn.Module):
             nn.Linear(256, 1)
         )
 
+    
+    class SafeLifeRQNetwork(nn.Module):
+    """
+    Module for calculating Q functions using LSTM.
+    """
+    def __init__(self, input_shape, use_noisy_layers=True):
+        super().__init__()
+
+        self.cnn, cnn_out_shape = safelife_cnn(input_shape)
+        num_features = np.product(cnn_out_shape)
+        num_actions = 9
+
+        Linear = NoisyLinear if use_noisy_layers else nn.Linear
+
+        self.advantages = nn.Sequential(
+            nn.LSTM(num_features, 256)
+            # Linear(num_features, 256),
+            # nn.ReLU(),
+            nn.Linear(256, num_actions)
+        )
+
+        self.value_func = nn.Sequential(
+            nn.LSTM(num_features, 256)
+            # Linear(num_features, 256),
+            # nn.ReLU(),
+            nn.Linear(256, 1)
+        )
+
+
     def forward(self, obs):
         # Switch observation to (c, w, h) instead of (h, w, c)
         obs = obs.transpose(-1, -3)
@@ -192,3 +221,5 @@ class SafeLifePolicyNetwork(nn.Module):
             
         policy = F.softmax(self.logits(x), dim=-1)
         return value, policy
+
+
