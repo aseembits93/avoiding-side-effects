@@ -422,9 +422,9 @@ try:
             from training.dqn_aux import DQN_AUX
 
             obs_shape = training_envs[0].observation_space.shape
-            train_model_aux = SafeLifeRQNetwork(obs_shape)
+            train_model_aux = SafeLifeQNetwork(obs_shape)
             train_model_aup = SafeLifeRQNetwork(obs_shape)
-            target_model_aux = SafeLifeRQNetwork(obs_shape)
+            target_model_aux = SafeLifeQNetwork(obs_shape)
             target_model_aup = SafeLifeRQNetwork(obs_shape)
                 
             aup_train_steps = 5e6

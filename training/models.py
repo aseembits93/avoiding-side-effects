@@ -158,29 +158,34 @@ class SafeLifeQNetwork(nn.Module):
 
         Linear = NoisyLinear if use_noisy_layers else nn.Linear
 
-        self.advantages = nn.Sequential(
-            nn.LSTM(num_features, 256)
-            # Linear(num_features, 256),
-            # nn.ReLU(),
-            nn.Linear(256, num_actions)
-        )
+        # self.advantages = nn.Sequential(
+        #     nn.LSTM(num_features, 256, batch_first=True)
+        #     # Linear(num_features, 256),
+        #     # nn.ReLU(),
+        #     nn.Linear(256, num_actions)
+        # )
 
-        self.value_func = nn.Sequential(
-            nn.LSTM(num_features, 256)
-            # Linear(num_features, 256),
-            # nn.ReLU(),
-            nn.Linear(256, 1)
-        )
+        # self.value_func = nn.Sequential(
+        #     nn.LSTM(num_features, 256, batch_first=True)
+        #     # Linear(num_features, 256),
+        #     # nn.ReLU(),
+        #     nn.Linear(256, 1)
+        # )
+        self.advantages_lstm = nn.LSTM(num_features, 256, batch_first=True)
+        self.advantages_linear = nn.Linear(256, num_actions)
+        self.value_lstm = nn.LSTM(num_features, 256, batch_first=True)
+        self.value_linear = nn.Linear(256, num_actions)
 
-
-    def forward(self, obs):
+    def forward(self, obs, A_hidden=None, V_hidden=None):
         # Switch observation to (c, w, h) instead of (h, w, c)
         obs = obs.transpose(-1, -3)
         x = self.cnn(obs).flatten(start_dim=1)
-        advantages = self.advantages(x)
-        value = self.value_func(x)
+        advantages, A_hidden = self.advantages_lstm(x, A_hidden) if A_hidden is not None else self.advantages_lstm(x)
+        advantages = self.advantages_linear(advantages)
+        value, V_hidden = value_lstm(x, V_hidden) if V_hidden is not None else value_lstm(x)
+        value = value_linear(value)
         qval = value + advantages - advantages.mean()
-        return qval
+        return qval, A_hidden, V_hidden
 
 
 class SafeLifePolicyNetwork(nn.Module):

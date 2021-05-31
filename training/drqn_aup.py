@@ -30,7 +30,8 @@ class ReplayBuffer(object):
 
     def sample(self, batch_size):
         sub_buffer = self.buffer[:self.idx]
-        data = np.random.choice(sub_buffer, batch_size, replace=False)
+        sample_index = np.random.randint(0, len(sub_buffer) - batch_size)
+        data = sub_buffer[sample_index : sample_index + batch_size]
         return zip(*data)
 
     def __len__(self):
@@ -58,6 +59,8 @@ class DRQN_AUP(object):
     num_checkpoints = 3
     report_freq = 256
     test_freq = 100000
+
+    collect_data_batch_size = min(optimize_freq, target_update_freq, checkpoint_freq, report_freq, test_freq)
 
     compute_device = torch.device('cuda' if USE_CUDA else 'cpu')
 
@@ -98,7 +101,7 @@ class DRQN_AUP(object):
         self.z_dim = z_dim
         self.exp = env_type
         self.state_encoder = None
-        self.training_aux = True
+        self.training_aux = False # TODO: support this change from True --> False
         self.switch = False
         self.is_random_projection=rand_proj
 
@@ -218,68 +221,83 @@ class DRQN_AUP(object):
                 qvals = model(state).detach().cpu().numpy().ravel()
                 state, reward, done, info = env.step(np.argmax(qvals))
 
-    def collect_data(self):
-        states = [
-            e.last_state if hasattr(e, 'last_state') else e.reset()
-            for e in self.training_envs
-        ]
-        if self.training_aux:
-            rstates = [
-                e.last_rstate if hasattr(e, 'last_rstate') else self.preprocess_state(e, reset=True)
-                for e in self.training_envs
+    def collect_data(self, A_hidden, V_hidden, env):
+        for _ in range(self.collect_data_batch_size):
+            states = [
+                e.last_state if hasattr(e, 'last_state') else e.reset()
+                for e in [env]
             ]
-            rreward = self.get_random_rewards(rstates)
-            rreward = rreward.squeeze(-1).tolist()
-        else:
-            rstates = None
-
-        tensor_states = torch.tensor(states, device=self.compute_device, dtype=torch.float32)
-        # get aux values and actions no matter what
-        qvals_aux = self.training_model_aux(tensor_states).detach().cpu().numpy()
-        actions_aux = np.argmax(qvals_aux, axis=-1)
-        # get aup actions and values if needed
-        if not self.training_aux:
-            qvals_aup = self.training_model_aup(tensor_states).detach().cpu().numpy()
-            actions_aup = np.argmax(qvals_aup, axis=-1)
-
-        num_states, num_actions = qvals_aux.shape
-
-        random_actions = np.random.randint(num_actions, size=num_states)
-        use_random = np.random.random(num_states) < self.epsilon
-        actions = actions_aux if self.training_aux else actions_aup
-        actions = np.choose(use_random, [actions, random_actions])
-
-        self.penalty = []
-        action_actor = None
-        for i, (env, state, action) in enumerate(zip(self.training_envs, states, actions)):
-            action_actor = action
-            if not self.training_aux: # if we're training aup, then we want to preserve ordering of actions
-                if qvals_aup.shape[1] < 9:
-                    action_actor = action + 1
-            next_state, reward, done, info = env.step(action_actor)
-
-            if not self.training_aux:
-                noop_value = qvals_aux[:, 0]
-                max_value = qvals_aux[:, action_actor]
-                penalty = np.abs(max_value - noop_value)
-                lamb = self.lamb_schedule.value(self.num_steps-self.train_aux_steps)
-                reward = reward - lamb * penalty[i]
-                self.penalty.append(penalty)
+            if self.training_aux:
+                rstates = [
+                    e.last_rstate if hasattr(e, 'last_rstate') else self.preprocess_state(e, reset=True)
+                    for e in [env]
+                ]
+                rreward = self.get_random_rewards(rstates)
+                rreward = rreward.squeeze(-1).tolist()
             else:
-                reward = rreward[i]
-                env.last_rstate = self.preprocess_state(env)
+                rstates = None
 
+            tensor_states = torch.tensor(states, device=self.compute_device, dtype=torch.float32)
+            # get aux values and actions no matter what
+            qvals_aux = self.training_model_aux(tensor_states).detach().cpu().numpy()
+            actions_aux = np.argmax(qvals_aux, axis=-1)
+            # get aup actions and values if needed
+            if not self.training_aux:
+                qvals_aup, A_hidden, V_hidden = self.training_model_aup(tensor_states, A_hidden, V_hidden)
+                qvals_aup = qvals_aup.detach().cpu().numpy()
+                assert len(qvals_aup) == 1 # Since we're using just 1 env at a time, just a check.
+                actions_aup = np.argmax(qvals_aup, axis=-1)
+
+            num_states, num_actions = qvals_aux.shape
+            assert num_states == 1 # Since we're using just 1 env at a time, just a check.
+
+            random_actions = np.random.randint(num_actions, size=num_states)
+            use_random = np.random.random(num_states) < self.epsilon
+            actions = actions_aux if self.training_aux else actions_aup
+            actions = np.choose(use_random, [actions, random_actions])
+
+            self.penalty = []
+            action_actor = None
+            for i, (env, state, action) in enumerate(zip([env], states, actions)):
+                action_actor = action
+                if not self.training_aux: # if we're training aup, then we want to preserve ordering of actions
+                    if qvals_aup.shape[1] < 9:
+                        action_actor = action + 1
+                next_state, reward, done, info = env.step(action_actor)
+
+                if not self.training_aux:
+                    noop_value = qvals_aux[:, 0]
+                    max_value = qvals_aux[:, action_actor]
+                    penalty = np.abs(max_value - noop_value)
+                    lamb = self.lamb_schedule.value(self.num_steps-self.train_aux_steps)
+                    reward = reward - lamb * penalty[i]
+                    self.penalty.append(penalty)
+                else:
+                    reward = rreward[i]
+                    env.last_rstate = self.preprocess_state(env)
+
+                if done:
+                    next_state = env.reset()
+                    self.num_episodes += 1
+                env.last_state = next_state
+                replay_buffer = self.replay_buffer_aux if self.training_aux else self.replay_buffer_aup
+                replay_buffer.push(state, action, reward, next_state, done)
+
+            if self.training_aux:
+                self.aux_reward = torch.tensor(rreward)
+
+            self.num_steps += len(states)
+            assert len(states) == 1 # Since we're using 1 env at a time, just a check.
+
+            # Don't continue past the end of an episode.
             if done:
-                next_state = env.reset()
-                self.num_episodes += 1
-            env.last_state = next_state
-            replay_buffer = self.replay_buffer_aux if self.training_aux else self.replay_buffer_aup
-            replay_buffer.push(state, action, reward, next_state, done)
+                break
 
-        if self.training_aux:
-            self.aux_reward = torch.tensor(rreward)
-
-        self.num_steps += len(states)
+        if done:
+            return None, None, done
+        else:
+            # Pass hidden states forward.
+            return A_hidden, V_hidden, done
 
     def optimize(self, report=False):
         replay_buffer = self.replay_buffer_aux if self.training_aux else self.replay_buffer_aup
@@ -298,8 +316,31 @@ class DRQN_AUP(object):
         reward = torch.tensor(reward, device=self.compute_device, dtype=torch.float32)
         done = torch.tensor(done, device=self.compute_device, dtype=torch.float32)
 
-        q_values = model(state)
-        next_q_values = target_model(next_state).detach()
+        # Get q_values
+        A_hidden = None
+        V_hidden = None
+        q_values = []
+        for i, s in enumerate(state):
+            # Reset the hidden states between episodes.
+            q_value, A_hidden, V_hidden = model(s, A_hidden, V_hidden)
+            q_values.append(q_value)
+            if done[i]:
+                A_hidden = None
+                V_hidden = None
+        q_values = torch.stack(q_values)
+
+        # Get next_q_values
+        A_hidden = None
+        V_hidden = None
+        next_q_values = []
+        for i, s in enumerate(next_state):
+            next_q_value, A_hidden, V_hidden = model(s, A_hidden, V_hidden)
+            next_q_values.append(next_q_value.detach())
+            # Reset the hidden states between episodes.
+            if done[i]:
+                A_hidden = None
+                V_hidden = None
+        next_q_values = torch.stack(next_q_values)
 
         q_value = q_values.gather(1, action.unsqueeze(1)).squeeze(1)
         next_q_value, next_action = next_q_values.max(1)
@@ -336,7 +377,13 @@ class DRQN_AUP(object):
     def train(self, steps):
         needs_report = True
 
-        for _ in range(int(steps / len(self.training_envs))):
+        A_hidden = None
+        V_hidden = None
+        env_index = 0
+        episode_completed = False
+        for _ in range(int(steps))# / len(self.training_envs))): # Toggling between environments instead of doing them in parallel
+            env = self.training_envs[env_index]
+
             num_steps = self.num_steps
             next_opt = round_up(num_steps, self.optimize_freq)
             next_update = round_up(num_steps, self.target_update_freq)
@@ -349,7 +396,11 @@ class DRQN_AUP(object):
                 print ('Finished Aux Training, Switching to AUP')
                 self.switch = True
 
-            self.collect_data()
+            A_hidden, V_hidden, episode_completed = self.collect_data(A_hidden, V_hidden, env)
+            if episode_completed:
+                # Switch to the next training_env next iteration to generate the next episode.
+                env_index = (env_index + 1) % len(self.training_envs)
+                episode_completed = False
 
             num_steps = self.num_steps
 
