@@ -13,6 +13,7 @@ import logging
 import logging.config
 
 import numpy as np
+import ipdb as pdb
 
 env_types = [
     'test',
@@ -41,13 +42,14 @@ parser.add_argument('--install', action="store_true",
 parser.add_argument('--shutdown', action="store_true",
     help="Shut down the system when the job is complete"
     "(helpful for running remotely).")
-parser.add_argument('--port', default=6006, type=int,
+parser.add_argument('--port', default=None, type=int,
     help="Port on which to run tensorboard.")
 parser.add_argument('--impact-penalty', default=0.0, type=float)
 parser.add_argument('--env-type', choices=env_types)
-parser.add_argument('--algo', default='ppo', choices=('ppo', 'aup', 'aup-p', 'naive', 'dqn','dqn-aup'))
+parser.add_argument('--algo', default='ppo', choices=('ppo', 'aup', 'aup-p', 'naive', 'dqn','dqn-aup','dqn-mt-aup'))
 parser.add_argument('--config', default='ppo', choices=('ppo', 'aup', 'aupp', 'naive'))
 parser.add_argument('--z', default=1.0)
+parser.add_argument('--modR', default=1)
 parser.add_argument('--n_envs', default='8')
 args = parser.parse_args()
 
@@ -119,7 +121,7 @@ try:
             'append-still-easy'
             ]
 
-    n_levels = 8
+    n_levels = 1
     
     if args.algo == 'naive':
         penalty = 1.0
@@ -286,13 +288,13 @@ try:
         summary_writer = SummaryWriter(data_dir)
 
         training_envs = safelife_env_factory(
-                logdir=data_dir, summary_writer=summary_writer, num_envs=16,
+                logdir=data_dir, summary_writer=summary_writer, num_envs=1,
                 impact_penalty=linear_schedule(t_penalty, [0, penalty]),
                 min_performance=linear_schedule(t_performance, [0.01, 0.3]),
                 level_iterator=level_iterator,
                 )
         testing_envs = safelife_env_factory(
-                logdir=data_dir, summary_writer=summary_writer, num_envs=8, testing=True,
+                logdir=data_dir, summary_writer=summary_writer, num_envs=1, testing=True,
                 level_iterator=SafeLifeLevelIterator(
                     test_levels, distinct_levels=n_levels, total_levels=-1)
                 )
@@ -415,7 +417,34 @@ try:
                     summary_writer=summary_writer,
                     )
             aup_model.train(aup_train_steps)    
-
+            
+        elif args.algo == 'dqn-mt-aup':
+            from training.models import SafeLifeMTQNetwork, RandomNN, weights_init
+            from training.dqn_mt_aup import DQN_MT_AUP
+            modR = args.modR
+            obs_shape = training_envs[0].observation_space.shape
+            train_model_aup = SafeLifeMTQNetwork(obs_shape,modR)
+            target_model_aup = SafeLifeMTQNetwork(obs_shape,modR)
+            #Create reward model, apply xavier init and remove backprop requirement essentially freezing weights
+            reward_model = RandomNN(obs_shape, modR)
+            reward_model.apply(weights_init)
+            for param in reward_model.parameters():
+                param.requires_grad = False
+                
+            aup_train_steps = 5e6
+            #pdb.set_trace()
+            aup_model = DQN_MT_AUP(
+                    training_model_aup=train_model_aup,
+                    target_model_aup=target_model_aup,
+                    reward_model=reward_model,
+                    modR=modR,
+                    env_type=run_env_type,
+                    training_envs=training_envs,
+                    testing_envs=None,
+                    logdir=data_dir, 
+                    summary_writer=summary_writer,
+                    )
+            aup_model.train(aup_train_steps)    
                                       
 except Exception:
     logging.exception("Ran into an unexpected error. Aborting training.")

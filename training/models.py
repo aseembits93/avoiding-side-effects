@@ -3,7 +3,16 @@ import numpy as np
 import torch
 from torch import nn
 from torch.nn import functional as F
+import ipdb as pdb
+from torch.nn.modules.linear import Linear
 
+def weights_init(m):
+    if isinstance(m, nn.Conv2d):
+        torch.nn.init.xavier_uniform_(m.weight)
+        m.bias.data.fill_(0.01)
+    if isinstance(m, nn.Linear):
+        torch.nn.init.xavier_uniform_(m.weight)
+        m.bias.data.fill_(0.01)
 
 def safelife_cnn(input_shape):
     """
@@ -146,6 +155,7 @@ class SafeLifeQNetwork(nn.Module):
 
     def forward(self, obs):
         # Switch observation to (c, w, h) instead of (h, w, c)
+        #pdb.set_trace()
         obs = obs.transpose(-1, -3)
         x = self.cnn(obs).flatten(start_dim=1)
         advantages = self.advantages(x)
@@ -192,3 +202,65 @@ class SafeLifePolicyNetwork(nn.Module):
             
         policy = F.softmax(self.logits(x), dim=-1)
         return value, policy
+
+class SafeLifeMTQNetwork(nn.Module):
+    """
+    Module for calculating Q functions.
+    """
+    def __init__(self, input_shape, modR, use_noisy_layers=True):
+        super().__init__()
+        self.modR = modR
+        self.cnn, cnn_out_shape = safelife_cnn(input_shape)
+        num_features = np.product(cnn_out_shape)
+        num_actions = 9
+
+        Linear = NoisyLinear if use_noisy_layers else nn.Linear
+
+        self.advantages = nn.Sequential(
+            Linear(num_features, 256),
+            nn.ReLU(),
+            nn.Linear(256, num_actions)
+        )
+
+        self.value_func = nn.Sequential(
+            Linear(num_features, 256),
+            nn.ReLU(),
+            nn.Linear(256, 1)
+        )
+
+        self.aux_advantages = [nn.Sequential(Linear(num_features, 256),nn.ReLU(),nn.Linear(256, num_actions)) for _ in range(modR)]
+        self.aux_value_func = [nn.Sequential(Linear(num_features, 256),nn.ReLU(),nn.Linear(256, 1)) for _ in range(modR)]
+
+    def forward(self, obs):
+        # Switch observation to (c, w, h) instead of (h, w, c)
+        # obs shape torch.Size([16, 25, 25, 10])
+        obs = obs.transpose(-1, -3)
+        x = self.cnn(obs).flatten(start_dim=1)
+        advantages = self.advantages(x)
+        aux_advantages = [self.aux_advantages[i](x) for i in range(self.modR)]
+        value = self.value_func(x)
+        aux_value = [self.aux_value_func[i](x) for i in range(self.modR)]
+        qval = value + advantages - advantages.mean()
+        aux_qval = [aux_value[i] + aux_advantages[i] - aux_advantages[i].mean() for i in range(self.modR)]
+        # output penalty term here? try one variation with that 
+        return qval, torch.stack(aux_qval)
+
+class RandomNN(nn.Module):
+    """
+    Module for calculating Q functions.
+    """
+    def __init__(self, input_shape, modR):
+        super().__init__()
+        self.cnn, cnn_out_shape = safelife_cnn(input_shape)
+        num_features = np.product(cnn_out_shape)
+        num_actions = 9
+        self.fc1 = nn.Linear(576,modR)
+        
+
+    def forward(self, obs):
+        # Switch observation to (c, w, h) instead of (h, w, c)
+        # obs shape torch.Size([16, 25, 25, 10])
+        obs = obs.transpose(-1, -3)
+        x = self.cnn(obs).flatten(start_dim=1)
+        x = self.fc1(x)
+        return torch.tanh(x)        
