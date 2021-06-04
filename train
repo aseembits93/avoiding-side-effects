@@ -14,6 +14,8 @@ import logging.config
 
 import numpy as np
 
+aux_logdir = '/scratch/data/avoiding-side-effects/training_results/dqn-aup/append-still-easy'
+
 env_types = [
     'test',
     'append-still',
@@ -45,7 +47,7 @@ parser.add_argument('--port', default=6006, type=int,
     help="Port on which to run tensorboard.")
 parser.add_argument('--impact-penalty', default=0.0, type=float)
 parser.add_argument('--env-type', choices=env_types)
-parser.add_argument('--algo', default='ppo', choices=('ppo', 'aup', 'aup-p', 'naive', 'dqn','dqn-aup'))
+parser.add_argument('--algo', default='ppo', choices=('ppo', 'aup', 'aup-p', 'naive', 'dqn','dqn-aup', 'drqn-aup'))
 parser.add_argument('--config', default='ppo', choices=('ppo', 'aup', 'aupp', 'naive'))
 parser.add_argument('--z', default=1.0)
 parser.add_argument('--n_envs', default='8')
@@ -275,7 +277,8 @@ try:
         else:
             level_iterator = SafeLifeLevelIterator(
                     training_levels,
-                    distinct_levels=n_levels,
+                    # distinct_levels=n_levels,
+                    distinct_levels=1,
                     total_levels=-1)
             if run_env_type == 'append-still-easy' or run_env_type == 'append-still':
                 #test_levels = 'benchmarks/v1.0/append-still.npz'
@@ -286,7 +289,8 @@ try:
         summary_writer = SummaryWriter(data_dir)
 
         training_envs = safelife_env_factory(
-                logdir=data_dir, summary_writer=summary_writer, num_envs=16,
+                # logdir=data_dir, summary_writer=summary_writer, num_envs=16,
+                logdir=data_dir, summary_writer=summary_writer, num_envs=1,
                 impact_penalty=linear_schedule(t_penalty, [0, penalty]),
                 min_performance=linear_schedule(t_performance, [0.01, 0.3]),
                 level_iterator=level_iterator,
@@ -304,7 +308,7 @@ try:
         else:
             aup_train_steps = 4e6
             ppo_train_steps = 5e6
-
+        
         if args.algo in ['aup', 'aup-p']:
             from training.models import SafeLifePolicyNetwork
             from training.aux_training_ppo import PPO_AUX
@@ -417,9 +421,9 @@ try:
             aup_model.train(aup_train_steps)    
 
         elif args.algo == 'drqn-aup':
-            from training.models import SafeLifeRQNetwork
+            from training.models import SafeLifeQNetwork, SafeLifeRQNetwork
             from training.drqn_aup import DRQN_AUP
-            from training.dqn_aux import DQN_AUX
+            from training.drqn_aux import DRQN_AUX
 
             obs_shape = training_envs[0].observation_space.shape
             train_model_aux = SafeLifeQNetwork(obs_shape)
@@ -427,21 +431,25 @@ try:
             target_model_aux = SafeLifeQNetwork(obs_shape)
             target_model_aup = SafeLifeRQNetwork(obs_shape)
                 
-            aup_train_steps = 5e6
+            # aup_train_steps = 5e6
+            aup_train_steps = 2e4
 
             if args.algo == 'aup-p':
                 aup_p = True
             else:
                 aup_p = False
 
-            aux_model = DQN_AUX(
+            aux_model = DRQN_AUX(
                     train_model_aux, target_model_aux, run_env_type,
                     training_envs=training_envs,
                     testing_envs=None,
                     z_dim=int(args.z),
-                    logdir=data_dir,
+                    # logdir=data_dir,
+                    logdir=aux_logdir,
                     summary_writer=summary_writer)
-            aux_model.train(aux_train_steps)   
+            # aux_model.train(aux_train_steps)  
+            training_model_aux = aux_model.training_model_aux
+            target_model_aux = aux_model.target_model_aux 
 
             aup_model = DRQN_AUP(
                     training_model_aux=train_model_aux,

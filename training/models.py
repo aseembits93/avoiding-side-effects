@@ -143,9 +143,18 @@ class SafeLifeQNetwork(nn.Module):
             nn.ReLU(),
             nn.Linear(256, 1)
         )
+    
+    def forward(self, obs):
+        # Switch observation to (c, w, h) instead of (h, w, c)
+        obs = obs.transpose(-1, -3)
+        x = self.cnn(obs).flatten(start_dim=1)
+        advantages = self.advantages(x)
+        value = self.value_func(x)
+        qval = value + advantages - advantages.mean()
+        return qval
 
     
-    class SafeLifeRQNetwork(nn.Module):
+class SafeLifeRQNetwork(nn.Module):
     """
     Module for calculating Q functions using LSTM.
     """
@@ -171,20 +180,29 @@ class SafeLifeQNetwork(nn.Module):
         #     # nn.ReLU(),
         #     nn.Linear(256, 1)
         # )
-        self.advantages_lstm = nn.LSTM(num_features, 256, batch_first=True)
+        # self.advantages_lstm = nn.LSTM(num_features, 256, batch_first=False)
+        self.advantages_lstm = nn.LSTMCell(num_features, 256)
         self.advantages_linear = nn.Linear(256, num_actions)
-        self.value_lstm = nn.LSTM(num_features, 256, batch_first=True)
-        self.value_linear = nn.Linear(256, num_actions)
+        # self.value_lstm = nn.LSTM(num_features, 256, batch_first=False)
+        self.value_lstm = nn.LSTMCell(num_features, 256)
+        self.value_linear = nn.Linear(256, 1)
 
     def forward(self, obs, A_hidden=None, V_hidden=None):
         # Switch observation to (c, w, h) instead of (h, w, c)
         obs = obs.transpose(-1, -3)
         x = self.cnn(obs).flatten(start_dim=1)
-        advantages, A_hidden = self.advantages_lstm(x, A_hidden) if A_hidden is not None else self.advantages_lstm(x)
+        # x = torch.unsqueeze(x, 0) # insert leading shape of 1 for seq_len <-- undone for LSTMCell
+        
+        A_hidden = self.advantages_lstm(x, A_hidden) if A_hidden is not None else self.advantages_lstm(x)
+        advantages = A_hidden[0]
+        # advantages = torch.squeeze(advantages, 0) # <-- undone for LSTMCell
         advantages = self.advantages_linear(advantages)
-        value, V_hidden = value_lstm(x, V_hidden) if V_hidden is not None else value_lstm(x)
-        value = value_linear(value)
+        V_hidden = self.value_lstm(x, V_hidden) if V_hidden is not None else self.value_lstm(x)
+        value = V_hidden[0]
+        # value = torch.squeeze(value, 0) # <-- undone for LSTMCell
+        value = self.value_linear(value)
         qval = value + advantages - advantages.mean()
+        
         return qval, A_hidden, V_hidden
 
 

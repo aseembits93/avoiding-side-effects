@@ -105,9 +105,11 @@ class DRQN_AUP(object):
         self.switch = False
         self.is_random_projection=rand_proj
 
-        self.train_aux_steps = 150e3
+        # self.train_aux_steps = 150e3
+        self.train_aux_steps = 0
         self.buffer_size = 50e3
-        self.train_encoder_epochs = 50
+        # self.train_encoder_epochs = 50
+        self.train_encoder_epochs = 0
         self.lamb_schedule = LinearSchedule(1.985e6, initial_p=0.015, final_p=0.015)
 
         if self.training_aux:
@@ -322,7 +324,9 @@ class DRQN_AUP(object):
         q_values = []
         for i, s in enumerate(state):
             # Reset the hidden states between episodes.
+            s = torch.unsqueeze(s, 0) # To pad the shape removed by the unwrapping from the loop. This is the seq_len.
             q_value, A_hidden, V_hidden = model(s, A_hidden, V_hidden)
+            q_value = torch.squeeze(q_value, 0) # Recorrect.
             q_values.append(q_value)
             if done[i]:
                 A_hidden = None
@@ -334,7 +338,9 @@ class DRQN_AUP(object):
         V_hidden = None
         next_q_values = []
         for i, s in enumerate(next_state):
+            s = torch.unsqueeze(s, 0) # To pad the shape removed by the unwrapping from the loop. This is the seq_len.
             next_q_value, A_hidden, V_hidden = model(s, A_hidden, V_hidden)
+            next_q_value = torch.squeeze(next_q_value, 0) # Recorrect.
             next_q_values.append(next_q_value.detach())
             # Reset the hidden states between episodes.
             if done[i]:
@@ -381,8 +387,9 @@ class DRQN_AUP(object):
         V_hidden = None
         env_index = 0
         episode_completed = False
-        for _ in range(int(steps))# / len(self.training_envs))): # Toggling between environments instead of doing them in parallel
+        for _ in range(int(steps)):# / len(self.training_envs))): # Toggling between environments instead of doing them in parallel
             env = self.training_envs[env_index]
+            if _ % 100 == 0: print(f"AUP step: {_}")
 
             num_steps = self.num_steps
             next_opt = round_up(num_steps, self.optimize_freq)
@@ -396,7 +403,11 @@ class DRQN_AUP(object):
                 print ('Finished Aux Training, Switching to AUP')
                 self.switch = True
 
-            A_hidden, V_hidden, episode_completed = self.collect_data(A_hidden, V_hidden, env)
+            try:
+                A_hidden, V_hidden, episode_completed = self.collect_data(A_hidden, V_hidden, env)
+            except:
+                print("Exception raised from COLLECT_DATA")
+                raise
             if episode_completed:
                 # Switch to the next training_env next iteration to generate the next episode.
                 env_index = (env_index + 1) % len(self.training_envs)
@@ -412,7 +423,11 @@ class DRQN_AUP(object):
                 needs_report = True
 
             if num_steps >= next_opt:
-                self.optimize(needs_report)
+                try:
+                    self.optimize(needs_report)
+                except:
+                    print("Exception raised from OPTIMIZE")
+                    raise
                 needs_report = False
 
             if num_steps >= next_update:
