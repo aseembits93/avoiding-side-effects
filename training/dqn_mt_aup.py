@@ -167,7 +167,9 @@ class DQN_MT_AUP(object):
         #     qvals_aup = self.training_model_aup(tensor_states).detach().cpu().numpy()
         #     actions_aup = np.argmax(qvals_aup, axis=-1)
         # qval aux dimension modr,env,9
-        qvals_aup, qvals_aux = self.training_model_aup(tensor_states)#.detach().cpu().numpy()
+        qvals_aup, qvals_aux = self.training_model_aup(tensor_states)
+        qvals_aup = qvals_aup.detach()
+        qvals_aux = qvals_aux.detach()
         actions_aup = torch.argmax(qvals_aup, axis=-1)
         aux_rewards = self.reward_model(tensor_states)
         num_states, num_actions = qvals_aup.shape
@@ -177,8 +179,6 @@ class DQN_MT_AUP(object):
         actions = actions_aup
         actions = np.choose(use_random, [actions, random_actions])
 
-        self.penalty = []
-        self.penalty = []
         action_actor = None
         for i, (env, state, action, aux_reward) in enumerate(zip(self.training_envs, states, actions, aux_rewards)):
             action_actor = action
