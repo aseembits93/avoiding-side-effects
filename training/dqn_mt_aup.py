@@ -13,7 +13,6 @@ from . import checkpointing
 from .utils import round_up, LinearSchedule
 
 from .cb_vae import train_encoder, load_state_encoder, encode_state
-import ipdb as pdb
 from copy import deepcopy
 
 USE_CUDA = torch.cuda.is_available()
@@ -96,15 +95,14 @@ class DQN_MT_AUP(object):
 
     def epsilon_old(self):
         # hardcode this for now
-        t1 = 1e5
-        t2 = 1e6
+        t1 = 1e4
+        t2 = 1e5
         y1 = 1.0
-        y2 = 0.1
+        y2 = 0.01
         t = (self.num_steps - t1) / (t2 - t1)
         return y1 + (y2-y1) * np.clip(t, 0, 1)
 
     def get_random_rewards(self, states):
-        #
         states = torch.stack(states)
         if self.is_random_projection:
             #states = states.to(self.compute_device)
@@ -163,7 +161,7 @@ class DQN_MT_AUP(object):
         #     rstates = None
 
         tensor_states = torch.tensor(states, dtype=torch.float32)#device=self.compute_device, dtype=torch.float32)
-        
+        self.epsilon = self.epsilon_old()
         # get aup actions and values if needed
         # if not self.training_aux:
         #     qvals_aup = self.training_model_aup(tensor_states).detach().cpu().numpy()
@@ -173,7 +171,6 @@ class DQN_MT_AUP(object):
         actions_aup = torch.argmax(qvals_aup, axis=-1)
         aux_rewards = self.reward_model(tensor_states)
         num_states, num_actions = qvals_aup.shape
-        #
         
         random_actions = np.random.randint(num_actions, size=num_states)
         use_random = np.random.random(num_states) < self.epsilon
@@ -208,7 +205,7 @@ class DQN_MT_AUP(object):
             replay_buffer.push(state, action, reward, next_state, done, aux_reward)
 
         self.num_steps += len(states)
-        self.epsilon = self.epsilon_old()
+        
 
     def optimize(self, report=False):
         #
@@ -248,7 +245,6 @@ class DQN_MT_AUP(object):
         aux_next_q_value = [aux_next_q_values[i].max(1)[0] for i in range(self.modR)]
         aux_next_action = [aux_next_q_values[i].max(1)[1] for i in range(self.modR)]
         aux_expected_q_value = [aux_reward[i] + self.gamma * aux_next_q_value[i] * (1 - done) for i in range(self.modR)]
-        #print(aux_q_value,aux_next_q_value,aux_next_action,aux_expected_q_value)
         
         main_loss = torch.mean((q_value - expected_q_value)**2)
         aux_losses = [torch.mean((aux_q_value[i] - aux_expected_q_value[i])**2) for i in range(self.modR)]
