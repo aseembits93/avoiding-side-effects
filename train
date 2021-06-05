@@ -432,7 +432,7 @@ try:
             target_model_aup = SafeLifeRQNetwork(obs_shape)
                 
             # aup_train_steps = 5e6
-            aup_train_steps = 2e4
+            aup_train_steps = 2e5
 
             if args.algo == 'aup-p':
                 aup_p = True

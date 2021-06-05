@@ -453,4 +453,5 @@ class DRQN_AUP(object):
             # if num_steps >= next_test:
             #     self.run_test_envs()
 
-
+            if self.num_steps >= steps:
+                break
