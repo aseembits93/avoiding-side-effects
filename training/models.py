@@ -180,29 +180,36 @@ class SafeLifeRQNetwork(nn.Module):
         #     # nn.ReLU(),
         #     nn.Linear(256, 1)
         # )
-        # self.advantages_lstm = nn.LSTM(num_features, 256, batch_first=False)
-        self.advantages_lstm = nn.LSTMCell(num_features, 256)
+        self.advantages_lstm = nn.LSTM(num_features, 256, batch_first=False)
+        # self.advantages_lstm = nn.LSTMCell(num_features, 256)
         self.advantages_linear = nn.Linear(256, num_actions)
-        # self.value_lstm = nn.LSTM(num_features, 256, batch_first=False)
-        self.value_lstm = nn.LSTMCell(num_features, 256)
+        self.value_lstm = nn.LSTM(num_features, 256, batch_first=False)
+        # self.value_lstm = nn.LSTMCell(num_features, 256)
         self.value_linear = nn.Linear(256, 1)
 
     def forward(self, obs, A_hidden=None, V_hidden=None):
         # Switch observation to (c, w, h) instead of (h, w, c)
         obs = obs.transpose(-1, -3)
         x = self.cnn(obs).flatten(start_dim=1)
-        # x = torch.unsqueeze(x, 0) # insert leading shape of 1 for seq_len <-- undone for LSTMCell
-        
-        A_hidden = self.advantages_lstm(x, A_hidden) if A_hidden is not None else self.advantages_lstm(x)
-        advantages = A_hidden[0]
-        # advantages = torch.squeeze(advantages, 0) # <-- undone for LSTMCell
+        x = torch.unsqueeze(x, 1) # insert shape of 1 for batch_size
+        # x.shape: (seq_len, 1, num_features)
+
+        try:
+            advantages, A_hidden = self.advantages_lstm(x, A_hidden) if A_hidden is not None else self.advantages_lstm(x)
+        except:
+            print(f"x.shape: {x.shape}")
+            print(f"A_hidden is None: {A_hidden is None}")
+            raise
+        advantages = torch.squeeze(advantages, 1) # remove singular batch dimension
         advantages = self.advantages_linear(advantages)
-        V_hidden = self.value_lstm(x, V_hidden) if V_hidden is not None else self.value_lstm(x)
-        value = V_hidden[0]
-        # value = torch.squeeze(value, 0) # <-- undone for LSTMCell
+
+        value, V_hidden = self.value_lstm(x, V_hidden) if V_hidden is not None else self.value_lstm(x)
+        value = torch.squeeze(value, 1) # remove singular batch dimension
         value = self.value_linear(value)
+
         qval = value + advantages - advantages.mean()
-        
+
+        # print(f"x.shape: {x.shape}, advantages.shape: {advantages.shape}, value.shape: {value.shape}, qval.shape: {qval.shape}")
         return qval, A_hidden, V_hidden
 
 

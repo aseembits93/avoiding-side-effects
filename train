@@ -447,7 +447,7 @@ try:
                     # logdir=data_dir,
                     logdir=aux_logdir,
                     summary_writer=summary_writer)
-            # aux_model.train(aux_train_steps)  
+            # aux_model.train(aux_train_steps)
             training_model_aux = aux_model.training_model_aux
             target_model_aux = aux_model.target_model_aux 
 

@@ -55,7 +55,8 @@ class DRQN_AUP(object):
     replay_size = 100000
     target_update_freq = 10000
 
-    checkpoint_freq = 100000
+    # checkpoint_freq = 100000
+    checkpoint_freq = 20000
     num_checkpoints = 3
     report_freq = 256
     test_freq = 100000
@@ -67,7 +68,8 @@ class DRQN_AUP(object):
     training_envs = None
     testing_envs = None
 
-    epsilon = 0.0  # for exploration
+    # Specified as an instance attribute in __init__ so it can be set to self.epsilon_old().
+    # epsilon = 0.0  # for exploration
 
     def __init__(
             self,
@@ -118,6 +120,9 @@ class DRQN_AUP(object):
             if not self.is_random_projection:
                 self.train_state_encoder(envs=self.training_envs)
             self.register_random_reward_functions()
+        
+        # Previously set as a class attribute.
+        self.epsilon = self.epsilon_old
 
     @property
     def epsilon_old(self):
@@ -246,6 +251,7 @@ class DRQN_AUP(object):
             # get aup actions and values if needed
             if not self.training_aux:
                 qvals_aup, A_hidden, V_hidden = self.training_model_aup(tensor_states, A_hidden, V_hidden)
+                # qvals_aup = torch.squeeze(qvals_aup, 0)
                 qvals_aup = qvals_aup.detach().cpu().numpy()
                 assert len(qvals_aup) == 1 # Since we're using just 1 env at a time, just a check.
                 actions_aup = np.argmax(qvals_aup, axis=-1)
@@ -318,35 +324,37 @@ class DRQN_AUP(object):
         reward = torch.tensor(reward, device=self.compute_device, dtype=torch.float32)
         done = torch.tensor(done, device=self.compute_device, dtype=torch.float32)
 
+        done_indices = torch.nonzero(done).flatten()
+
         # Get q_values
-        A_hidden = None
-        V_hidden = None
         q_values = []
-        for i, s in enumerate(state):
-            # Reset the hidden states between episodes.
-            s = torch.unsqueeze(s, 0) # To pad the shape removed by the unwrapping from the loop. This is the seq_len.
-            q_value, A_hidden, V_hidden = model(s, A_hidden, V_hidden)
-            q_value = torch.squeeze(q_value, 0) # Recorrect.
-            q_values.append(q_value)
-            if done[i]:
-                A_hidden = None
-                V_hidden = None
-        q_values = torch.stack(q_values)
+        episode_index = 0
+        episode_start_at_index = 0
+        while episode_start_at_index < len(state):
+            if episode_index >= len(done_indices):
+                next_episode_start_at_index = len(state)
+            else:
+                next_episode_start_at_index = done_indices[episode_index] + 1
+            state_slice = state[episode_start_at_index : next_episode_start_at_index] # Note: attempted slice may overshoot.
+            q_values.append(model(state_slice)[0].squeeze(1)) # Squeezes out the batch dimension.
+            episode_start_at_index = next_episode_start_at_index
+            episode_index += 1
+        q_values = torch.cat(q_values)
 
         # Get next_q_values
-        A_hidden = None
-        V_hidden = None
         next_q_values = []
-        for i, s in enumerate(next_state):
-            s = torch.unsqueeze(s, 0) # To pad the shape removed by the unwrapping from the loop. This is the seq_len.
-            next_q_value, A_hidden, V_hidden = model(s, A_hidden, V_hidden)
-            next_q_value = torch.squeeze(next_q_value, 0) # Recorrect.
-            next_q_values.append(next_q_value.detach())
-            # Reset the hidden states between episodes.
-            if done[i]:
-                A_hidden = None
-                V_hidden = None
-        next_q_values = torch.stack(next_q_values)
+        episode_index = 0
+        episode_start_at_index = 0
+        while episode_start_at_index < len(next_state):
+            if episode_index >= len(done_indices):
+                next_episode_start_at_index = len(next_state)
+            else:
+                next_episode_start_at_index = done_indices[episode_index] + 1
+            next_state_slice = next_state[episode_start_at_index : next_episode_start_at_index] # Note: attempted slice may overshoot.
+            next_q_values.append(model(next_state_slice)[0])
+            episode_start_at_index = next_episode_start_at_index
+            episode_index += 1
+        next_q_values = torch.cat(next_q_values)
 
         q_value = q_values.gather(1, action.unsqueeze(1)).squeeze(1)
         next_q_value, next_action = next_q_values.max(1)
