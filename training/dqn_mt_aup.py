@@ -54,7 +54,7 @@ class DQN_MT_AUP(object):
     target_update_freq = 10000
 
     checkpoint_freq = 100000
-    num_checkpoints = 3
+    num_checkpoints = 50
     report_freq = 256
     test_freq = 100000
 
@@ -171,7 +171,7 @@ class DQN_MT_AUP(object):
         qvals_aup = qvals_aup.detach()
         qvals_aux = qvals_aux.detach()
         actions_aup = torch.argmax(qvals_aup, axis=-1)
-        aux_rewards = self.reward_model(tensor_states)
+        aux_rewards = self.reward_model(tensor_states).detach().numpy()
         num_states, num_actions = qvals_aup.shape
         
         random_actions = np.random.randint(num_actions, size=num_states)
@@ -224,14 +224,14 @@ class DQN_MT_AUP(object):
         # action = torch.tensor(action, device=self.compute_device, dtype=torch.int64)
         # reward = torch.tensor(reward, device=self.compute_device, dtype=torch.float32)
         # done = torch.tensor(done, device=self.compute_device, dtype=torch.float32)
-
+        
         state = torch.tensor(state, dtype=torch.float32)
         next_state = torch.tensor(next_state, dtype=torch.float32)
         action = torch.tensor(action, dtype=torch.int64)
         reward = torch.tensor(reward, dtype=torch.float32)
         done = torch.tensor(done, dtype=torch.float32)
-        aux_reward = torch.tensor(aux_reward, dtype=torch.float32)
         
+        aux_reward = torch.tensor(aux_reward, dtype=torch.float32).T #modR,64
         q_values, aux_q_values = model(state)
         next_q_values, aux_next_q_values = target_model(next_state)
         next_q_values, aux_next_q_values = next_q_values.detach(), aux_next_q_values.detach()
@@ -265,10 +265,11 @@ class DQN_MT_AUP(object):
             writer.add_scalar("qvals/model_max", q_values.max(1)[0].mean().item(), n)
             writer.add_scalar("qvals/target_mean", next_q_values.mean().item(), n)
             writer.add_scalar("qvals/target_max", next_q_value.mean().item(), n)
-            writer.add_scalar("aux_qvals/model_mean", aux_q_values[0].mean().item(), n)
-            writer.add_scalar("aux_qvals/model_max", aux_q_values[0].max(1)[0].mean().item(), n)
-            writer.add_scalar("aux_qvals/target_mean", aux_next_q_values[0].mean().item(), n)
-            writer.add_scalar("aux_qvals/target_max", aux_next_q_value[0].mean().item(), n)
+            for i in range(self.modR):
+                writer.add_scalar("aux_qvals/model_mean"+"_"+str(i), aux_q_values[i].mean().item(), n)
+                writer.add_scalar("aux_qvals/model_max""_"+str(i), aux_q_values[i].max(1)[0].mean().item(), n)
+                writer.add_scalar("aux_qvals/target_mean""_"+str(i), aux_next_q_values[i].mean().item(), n)
+                writer.add_scalar("aux_qvals/target_max""_"+str(i), aux_next_q_value[i].mean().item(), n)
 
             writer.flush()
 
