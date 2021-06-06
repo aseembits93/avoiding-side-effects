@@ -49,11 +49,11 @@ class DQN_MT_AUP(object):
     optimize_freq = 16
     learning_rate_aup = 3e-4
 
-    replay_initial = 40000
-    replay_size = 100000
-    target_update_freq = 10000
+    replay_initial = 4000
+    replay_size = 10000
+    target_update_freq = 5000
 
-    checkpoint_freq = 100000
+    checkpoint_freq = 1000
     num_checkpoints = 50
     report_freq = 256
     test_freq = 100000
