@@ -130,7 +130,7 @@ try:
     
     # Loop over environment conditions 
     for run_env_type in run_env_types:
-        data_dir = 'training_results/{}/{}/'.format(args.algo, run_env_type)
+        data_dir = 'training_results/{}/{}/{}/'.format(args.algo, run_env_type,args.modR)
         print ('-------------------------------------------')
         print ('Running {} in {}'.format(
             args.algo,
