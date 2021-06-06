@@ -49,7 +49,7 @@ parser.add_argument('--env-type', choices=env_types)
 parser.add_argument('--algo', default='ppo', choices=('ppo', 'aup', 'aup-p', 'naive', 'dqn','dqn-aup','dqn-mt-aup'))
 parser.add_argument('--config', default='ppo', choices=('ppo', 'aup', 'aupp', 'naive'))
 parser.add_argument('--z', default=1.0)
-parser.add_argument('--modR', default=1)
+parser.add_argument('--modR', default=1, type=int)
 parser.add_argument('--n_envs', default='8')
 args = parser.parse_args()
 
