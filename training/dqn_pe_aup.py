@@ -14,6 +14,7 @@ from .utils import round_up, LinearSchedule
 
 from .cb_vae import train_encoder, load_state_encoder, encode_state
 from copy import deepcopy
+import ipdb as pdb
 
 USE_CUDA = torch.cuda.is_available()
 
@@ -37,7 +38,7 @@ class ReplayBuffer(object):
         return min(self.idx, self.capacity)
 
 
-class DQN_MT_AUP(object):
+class DQN_PE_AUP(object):
     summary_writer = None
     logdir = None
 
@@ -49,12 +50,12 @@ class DQN_MT_AUP(object):
     optimize_freq = 16
     learning_rate_aup = 3e-4
 
-    replay_initial = 40000
-    replay_size = 100000
-    target_update_freq = 10000
+    replay_initial = 4000
+    replay_size = 10000
+    target_update_freq = 5000
 
-    checkpoint_freq = 100000
-    num_checkpoints = 3
+    checkpoint_freq = 1000
+    num_checkpoints = 50
     report_freq = 256
     test_freq = 100000
 
@@ -69,7 +70,6 @@ class DQN_MT_AUP(object):
             self,
             training_model_aup,
             target_model_aup,
-            reward_model,
             modR,
             env_type,
             **kwargs):
@@ -89,7 +89,6 @@ class DQN_MT_AUP(object):
         self.exp = env_type
         self.buffer_size = 50e3
         self.lamb_schedule = LinearSchedule(1.985e6, initial_p=0.015, final_p=0.015)
-        self.reward_model = reward_model
         self.modR = modR
         
 
@@ -167,20 +166,13 @@ class DQN_MT_AUP(object):
         #     qvals_aup = self.training_model_aup(tensor_states).detach().cpu().numpy()
         #     actions_aup = np.argmax(qvals_aup, axis=-1)
         # qval aux dimension modr,env,9
-        qvals_aup, qvals_aux = self.training_model_aup(tensor_states)
-        qvals_aup = qvals_aup.detach()
-        qvals_aux = qvals_aux.detach()
-        actions_aup = torch.argmax(qvals_aup, axis=-1)
-        aux_rewards = self.reward_model(tensor_states)
+        qvals_aup, actions = self.training_model_aup(tensor_states,self.epsilon)
+        qvals_aup, actions = qvals_aup.detach().numpy(), actions.detach().numpy()
         num_states, num_actions = qvals_aup.shape
         
-        random_actions = np.random.randint(num_actions, size=num_states)
-        use_random = np.random.random(num_states) < self.epsilon
-        actions = actions_aup
-        actions = np.choose(use_random, [actions, random_actions])
-
+        
         action_actor = None
-        for i, (env, state, action, aux_reward) in enumerate(zip(self.training_envs, states, actions, aux_rewards)):
+        for i, (env, state, action) in enumerate(zip(self.training_envs, states, actions)):
             action_actor = action
             #copy env to get a counterfactual no-op next state
             #
@@ -193,7 +185,7 @@ class DQN_MT_AUP(object):
             # noop_value = qvals_aux[:, 0]
             # max_value = qvals_aux[:, action_actor]
             # penalty = np.abs(max_value - noop_value)
-            # lamb = self.lamb_schedule.value(self.num_steps)
+            lamb = self.lamb_schedule.value(self.num_steps)
             # reward = reward - lamb * penalty[i]
             # self.penalty.append(penalty)
             
@@ -202,7 +194,7 @@ class DQN_MT_AUP(object):
                 self.num_episodes += 1
             env.last_state = next_state
             replay_buffer = self.replay_buffer_aup
-            replay_buffer.push(state, action, reward, next_state, done, aux_reward)
+            replay_buffer.push(state, action, reward, next_state, done, lamb)
 
         self.num_steps += len(states)
         
@@ -216,7 +208,7 @@ class DQN_MT_AUP(object):
         # if len(replay_buffer) < self.replay_initial:
         #     return
 
-        state, action, reward, next_state, done, aux_reward = \
+        state, action, reward, next_state, done, lamb = \
             replay_buffer.sample(self.training_batch_size)
 
         # state = torch.tensor(state, device=self.compute_device, dtype=torch.float32)
@@ -224,34 +216,26 @@ class DQN_MT_AUP(object):
         # action = torch.tensor(action, device=self.compute_device, dtype=torch.int64)
         # reward = torch.tensor(reward, device=self.compute_device, dtype=torch.float32)
         # done = torch.tensor(done, device=self.compute_device, dtype=torch.float32)
-
+        #pdb.set_trace()
         state = torch.tensor(state, dtype=torch.float32)
         next_state = torch.tensor(next_state, dtype=torch.float32)
         action = torch.tensor(action, dtype=torch.int64)
         reward = torch.tensor(reward, dtype=torch.float32)
         done = torch.tensor(done, dtype=torch.float32)
-        aux_reward = torch.tensor(aux_reward, dtype=torch.float32)
+        lamb = torch.tensor(lamb,dtype=torch.float32)
         
-        q_values, aux_q_values = model(state)
-        next_q_values, aux_next_q_values = target_model(next_state)
-        next_q_values, aux_next_q_values = next_q_values.detach(), aux_next_q_values.detach()
-        
-        q_value = q_values.gather(1, action.unsqueeze(1)).squeeze(1)
-        next_q_value, next_action = next_q_values.max(1)
-        expected_q_value = reward + self.gamma * next_q_value * (1 - done)
+        q_values, penalty_term, action = model(state, 0, out_penalty=True)
+        next_q_values, next_action = target_model(next_state,0)
+        next_q_values, _ = next_q_values.detach(), next_action.detach()
+        #pdb.set_trace()
+        q_value = q_values.gather(1, action.unsqueeze(1)).squeeze(1) + lamb*penalty_term
+        next_q_value = next_q_values.max(1)[0]
+        expected_q_value = reward  + self.gamma * next_q_value * (1 - done)
 
         #
-        aux_q_value = [aux_q_values[i].gather(1, action.unsqueeze(1)).squeeze(1) for i in range(self.modR)]
-        aux_next_q_value = [aux_next_q_values[i].max(1)[0] for i in range(self.modR)]
-        aux_next_action = [aux_next_q_values[i].max(1)[1] for i in range(self.modR)]
-        aux_expected_q_value = [aux_reward[i] + self.gamma * aux_next_q_value[i] * (1 - done) for i in range(self.modR)]
-        
         main_loss = torch.mean((q_value - expected_q_value)**2)
-        aux_losses = [torch.mean((aux_q_value[i] - aux_expected_q_value[i])**2) for i in range(self.modR)]
-        #if not self.training_aux:
-        #    print (loss.shape)
-        
-        loss = main_loss+0.01*sum(aux_losses)
+                
+        loss = main_loss
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -265,11 +249,6 @@ class DQN_MT_AUP(object):
             writer.add_scalar("qvals/model_max", q_values.max(1)[0].mean().item(), n)
             writer.add_scalar("qvals/target_mean", next_q_values.mean().item(), n)
             writer.add_scalar("qvals/target_max", next_q_value.mean().item(), n)
-            writer.add_scalar("aux_qvals/model_mean", aux_q_values[0].mean().item(), n)
-            writer.add_scalar("aux_qvals/model_max", aux_q_values[0].max(1)[0].mean().item(), n)
-            writer.add_scalar("aux_qvals/target_mean", aux_next_q_values[0].mean().item(), n)
-            writer.add_scalar("aux_qvals/target_max", aux_next_q_value[0].mean().item(), n)
-
             writer.flush()
 
     def train(self, steps):

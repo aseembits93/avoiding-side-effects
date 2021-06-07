@@ -13,7 +13,6 @@ import logging
 import logging.config
 
 import numpy as np
-import ipdb as pdb
 
 env_types = [
     'test',
@@ -46,7 +45,7 @@ parser.add_argument('--port', default=None, type=int,
     help="Port on which to run tensorboard.")
 parser.add_argument('--impact-penalty', default=0.0, type=float)
 parser.add_argument('--env-type', choices=env_types)
-parser.add_argument('--algo', default='ppo', choices=('ppo', 'aup', 'aup-p', 'naive', 'dqn','dqn-aup','dqn-mt-aup'))
+parser.add_argument('--algo', default='ppo', choices=('ppo', 'aup', 'aup-p', 'naive', 'dqn','dqn-aup','dqn-mt-aup','dqn-pe-aup'))
 parser.add_argument('--config', default='ppo', choices=('ppo', 'aup', 'aupp', 'naive'))
 parser.add_argument('--z', default=1.0)
 parser.add_argument('--modR', default=1, type=int)
@@ -351,7 +350,6 @@ try:
 
             obs_shape = training_envs[0].observation_space.shape
             model = SafeLifePolicyNetwork(obs_shape)
-
             algo = PPO(
                     model,
                     training_envs=training_envs,
@@ -431,8 +429,7 @@ try:
             for param in reward_model.parameters():
                 param.requires_grad = False
                 
-            aup_train_steps = 100000#5e6
-            #pdb.set_trace()
+            aup_train_steps = 100000
             aup_model = DQN_MT_AUP(
                     training_model_aup=train_model_aup,
                     target_model_aup=target_model_aup,
@@ -444,7 +441,27 @@ try:
                     logdir=data_dir, 
                     summary_writer=summary_writer,
                     )
-            aup_model.train(aup_train_steps)    
+            aup_model.train(aup_train_steps)   
+
+        elif args.algo == 'dqn-pe-aup':
+            from training.models import SafeLifePEQNetwork
+            from training.dqn_pe_aup import DQN_PE_AUP
+            modR = args.modR
+            obs_shape = training_envs[0].observation_space.shape
+            train_model_aup = SafeLifePEQNetwork(obs_shape,modR)
+            target_model_aup = SafeLifePEQNetwork(obs_shape,modR)
+            aup_train_steps = 100000
+            aup_model = DQN_PE_AUP(
+                    training_model_aup=train_model_aup,
+                    target_model_aup=target_model_aup,
+                    modR=modR,
+                    env_type=run_env_type,
+                    training_envs=training_envs,
+                    testing_envs=None,
+                    logdir=data_dir, 
+                    summary_writer=summary_writer,
+                    )
+            aup_model.train(aup_train_steps)     
                                       
 except Exception:
     logging.exception("Ran into an unexpected error. Aborting training.")
