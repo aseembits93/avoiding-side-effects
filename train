@@ -431,7 +431,7 @@ try:
             for param in reward_model.parameters():
                 param.requires_grad = False
                 
-            aup_train_steps = 5e6
+            aup_train_steps = 1000000#5e6
             #pdb.set_trace()
             aup_model = DQN_MT_AUP(
                     training_model_aup=train_model_aup,
