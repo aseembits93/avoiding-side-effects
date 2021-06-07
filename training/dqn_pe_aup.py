@@ -50,9 +50,9 @@ class DQN_PE_AUP(object):
     optimize_freq = 16
     learning_rate_aup = 3e-4
 
-    replay_initial = 4000
-    replay_size = 10000
-    target_update_freq = 5000
+    replay_initial = 40000
+    replay_size = 100000
+    target_update_freq = 10000
 
     checkpoint_freq = 1000
     num_checkpoints = 50
@@ -226,7 +226,7 @@ class DQN_PE_AUP(object):
         
         q_values, penalty_term, action = model(state, 0, out_penalty=True)
         next_q_values, next_action = target_model(next_state,0)
-        next_q_values, _ = next_q_values.detach(), next_action.detach()
+        next_q_values, next_action = next_q_values.detach(), next_action.detach()
         #pdb.set_trace()
         q_value = q_values.gather(1, action.unsqueeze(1)).squeeze(1) + lamb*penalty_term
         next_q_value = next_q_values.max(1)[0]
