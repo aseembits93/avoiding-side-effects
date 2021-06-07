@@ -243,6 +243,7 @@ class SafeLifeMTQNetwork(nn.Module):
         qval = value + advantages - advantages.mean()
         aux_qval = [aux_value[i] + aux_advantages[i] - aux_advantages[i].mean() for i in range(self.modR)]
         # output penalty term here? try one variation with that 
+        # select greedy action lambda* Sum (Qs - Qphi)/modR
         return qval, torch.stack(aux_qval)
 
 class SafeLifePEQNetwork(nn.Module):
@@ -253,27 +254,27 @@ class SafeLifePEQNetwork(nn.Module):
         super().__init__()
         self.modR = modR
         self.cnn, cnn_out_shape = safelife_cnn(input_shape)
-        num_features = np.product(cnn_out_shape)
-        num_actions = 9
+        self.num_features = np.product(cnn_out_shape)
+        self.num_actions = 9
 
         Linear = NoisyLinear if use_noisy_layers else nn.Linear
 
         self.advantages = nn.Sequential(
-            Linear(num_features, 256),
+            Linear(self.num_features, 256),
             nn.ReLU(),
-            nn.Linear(256, num_actions)
+            nn.Linear(256, self.num_actions)
         )
 
         self.value_func = nn.Sequential(
-            Linear(num_features, 256),
+            Linear(self.num_features, 256),
             nn.ReLU(),
             nn.Linear(256, 1)
         )
 
-        self.aux_advantages = [nn.Sequential(Linear(num_features, 256),nn.ReLU(),nn.Linear(256, num_actions)) for _ in range(modR)]
-        self.aux_value_func = [nn.Sequential(Linear(num_features, 256),nn.ReLU(),nn.Linear(256, 1)) for _ in range(modR)]
+        self.aux_advantages = [nn.Sequential(Linear(self.num_features, 256),nn.ReLU(),nn.Linear(256, self.num_actions)) for _ in range(self.modR)]
+        self.aux_value_func = [nn.Sequential(Linear(self.num_features, 256),nn.ReLU(),nn.Linear(256, 1)) for _ in range(self.modR)]
 
-    def forward(self, obs, epsilon):
+    def forward(self, obs, epsilon, out_penalty=False):
         # Switch observation to (c, w, h) instead of (h, w, c)
         # obs shape torch.Size([16, 25, 25, 10])
         obs = obs.transpose(-1, -3)
@@ -286,7 +287,18 @@ class SafeLifePEQNetwork(nn.Module):
         aux_qval = [aux_value[i] + aux_advantages[i] - aux_advantages[i].mean() for i in range(self.modR)]
         # output penalty term here? try one variation with that 
         # select epsilon greedy action, calculate penalty term
-        return qval, torch.stack(aux_qval)        
+        chosen_actions = torch.argmax(qval, axis=-1)
+        use_random = torch.rand(qval.shape[0]) < epsilon
+        random_actions = torch.randint(0,self.num_actions,(qval.shape[0],))
+        actions = np.choose(use_random, [chosen_actions, random_actions])
+        #aux_qval= torch.stack(aux_qval)
+        if out_penalty:
+            aux_q_value = torch.stack([aux_qval[i].gather(1, actions.unsqueeze(1)).squeeze(1) for i in range(self.modR)])
+            noop_aux_q_value = torch.stack([aux_qval[i][:,0] for i in range(self.modR)])
+            penalty_term = torch.mean(torch.abs(noop_aux_q_value-aux_q_value),dim=0)
+            return qval, penalty_term, actions 
+        else:
+            return qval, actions                       
 
 class RandomNN(nn.Module):
     """
