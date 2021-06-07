@@ -15,6 +15,7 @@ import logging.config
 import numpy as np
 
 aux_logdir = '/scratch/data/avoiding-side-effects/training_results/dqn-aup/append-still-easy'
+drqn_aup_logdir = '/scratch/crowleyd/avoiding-side-effects/training_results/drqn-aup/append-still-easy/'
 
 env_types = [
     'test',
@@ -264,17 +265,20 @@ try:
         
         if 'spawn' in run_env_type:
             if args.algo in ['aup', 'aup-p']:
+                print(f"LEVEL ITERATOR: A")
                 level_iterator = spawn_loader_aup(
                         'append-still',
                         training_levels,
                         n_levels)
             else:
+                print(f"LEVEL ITERATOR: B")
                 level_iterator = spawn_loader(
                     'append-still',
                     training_levels,
                     n_levels)
             test_levels = 'benchmarks/v1.0/append-spawn.npz'
         else:
+            print(f"LEVEL ITERATOR: C")
             level_iterator = SafeLifeLevelIterator(
                     training_levels,
                     # distinct_levels=n_levels,
@@ -421,18 +425,20 @@ try:
             aup_model.train(aup_train_steps)    
 
         elif args.algo == 'drqn-aup':
+            print(f"t_penalty: {t_penalty}, penalty: {penalty}, t_performance: {t_performance}")
             from training.models import SafeLifeQNetwork, SafeLifeRQNetwork
             from training.drqn_aup import DRQN_AUP
             from training.drqn_aux import DRQN_AUX
 
             obs_shape = training_envs[0].observation_space.shape
+            print(f"obs_shape: {obs_shape}")
             train_model_aux = SafeLifeQNetwork(obs_shape)
             train_model_aup = SafeLifeRQNetwork(obs_shape)
             target_model_aux = SafeLifeQNetwork(obs_shape)
             target_model_aup = SafeLifeRQNetwork(obs_shape)
                 
             # aup_train_steps = 5e6
-            aup_train_steps = 2e5
+            aup_train_steps = 2e6
 
             if args.algo == 'aup-p':
                 aup_p = True
@@ -461,10 +467,13 @@ try:
                     z_dim=int(args.z),
                     training_envs=training_envs,
                     testing_envs=None,
-                    logdir=data_dir, 
+                    # logdir=data_dir, 
+                    logdir=drqn_aup_logdir, 
                     summary_writer=summary_writer,
                     )
-            aup_model.train(aup_train_steps)    
+            # aup_model.train(aup_train_steps)
+            from training.Train_DRQN import breakout_drqn
+            breakout_drqn(env=training_envs[0], aup_model=training_model_aux)
 
 
                                       
