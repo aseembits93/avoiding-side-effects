@@ -11,7 +11,7 @@ from .Network import QNet_LSTM
 
 # settings
 # Train_max_step         = 4000000
-Train_max_step         = 1000000
+Train_max_step         = 500000
 learning_rate          = 1e-4
 # gamma                  = 0.99
 gamma                  = 0.97
@@ -30,7 +30,8 @@ save_interval          = 1000
 model_path             = '/scratch/crowleyd/avoiding-side-effects/training_results/breakout_drqn/models/Breakout_DRQN.model'
 history_path           = '/scratch/crowleyd/avoiding-side-effects/training_results/breakout_drqn/train_histories/Breakout_DRQN'
 
-device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = 'cpu'
 print(device)
 
 class ReplayBuffer:
@@ -108,8 +109,10 @@ def train(optimizer, behaviourNet, targetNet, s_batch, a_batch, r_batch, done_ba
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()
+    torch.cuda.empty_cache()
 
 # def main():
+load = True
 def breakout_drqn(env, aup_model):
     aup_model.to(device)
     # env = CreateBreakout(stack=False)
@@ -117,7 +120,7 @@ def breakout_drqn(env, aup_model):
     buffer = ReplayBuffer(buffer_capacity)
     behaviourNet = QNet_LSTM(obs_shape)
     behaviourNet.to(device)
-    #behaviourNet.load_state_dict(torch.load(model_path))
+    if load: behaviourNet.load_state_dict(torch.load(model_path))
     targetNet = QNet_LSTM(obs_shape)
     targetNet.to(device)
     targetNet.load_state_dict(behaviourNet.state_dict())
@@ -125,7 +128,7 @@ def breakout_drqn(env, aup_model):
     
     score_history = []
     train_history = []
-    #train_history = np.load(history_path+'.npy').tolist()
+    if load: train_history = np.load(history_path+'.npy').tolist()
 
     step = 0
     score = 0
